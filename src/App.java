@@ -1,58 +1,400 @@
+import java.nio.charset.Charset;
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
 import java.util.Arrays;
-import java.util.Random;
+import java.util.Collections;
+import java.util.Scanner;
+import java.io.File;
+import java.io.IOException;
+import java.lang.reflect.InvocationTargetException;
 
 public class App {
-    static final int[] tamanhosTesteGrande =  { 31_250_000, 62_500_000, 125_000_000, 250_000_000, 500_000_000 };
-    static final int[] tamanhosTesteMedio =   {     12_500,     25_000,      50_000,     100_000,     200_000 };
-    static final int[] tamanhosTestePequeno = {          3,          6,          12,          24,          48 };
-    static Random aleatorio = new Random();
-    static long operacoes;
-    static double nanoToMilli = 1.0/1_000_000;
+
+	/** Nome do arquivo de dados. O arquivo deve estar localizado na raiz do projeto */
+    static String nomeArquivoDados;
     
+    /** Scanner para leitura de dados do teclado */
+    static Scanner teclado;
 
-    /**
-     * Gerador de vetores aleatórios de tamanho pré-definido. 
-     * @param tamanho Tamanho do vetor a ser criado.
-     * @return Vetor com dados aleatórios, com valores entre 1 e (tamanho/2), desordenado.
-     */
-    static int[] gerarVetor(int tamanho){
-        int[] vetor = new int[tamanho];
-        for (int i = 0; i < tamanho; i++) {
-            vetor[i] = aleatorio.nextInt(1, tamanho/2);
-        }
-        return vetor;        
+    /** Vetor de produtos cadastrados */
+    static Produto[] produtosCadastrados;
+
+    /** Quantidade de produtos cadastrados atualmente no vetor */
+    static int quantosProdutos = 0;
+
+    /** Vetor de pedidos cadastrados */
+    static Pedido[] pedidosCadastrados;
+    
+    /** Vetor de pedidos ordenados pela data do pedido */
+    static Pedido[] pedidosOrdenadosPorData;
+
+    /** Vetor de pedidos ordenados pelo valor final (crescente) */
+    static Pedido[] pedidosOrdenadosPorValor;
+    
+    /** Quantidade de pedidos cadastrados atualmente no vetor */
+    static int quantPedidos = 0;
+    
+    static IOrdenator<Pedido> ordenador;
+    
+    static void limparTela() {
+        System.out.print("\033[H\033[2J");
+        System.out.flush();
     }
 
-    /**
-     * Gerador de vetores de objetos do tipo Integer aleatórios de tamanho pré-definido. 
-     * @param tamanho Tamanho do vetor a ser criado.
-     * @return Vetor de Objetos Integer com dados aleatórios, com valores entre 1 e (tamanho/2), desordenado.
-     */
-    static Integer[] gerarVetorObjetos(int tamanho) {
-        Integer[] vetor = new Integer[tamanho];
-        for (int i = 0; i < tamanho; i++) {
-            vetor[i] = aleatorio.nextInt(1, 10 * tamanho);
-        }
-        return vetor;
+    /** Gera um efeito de pausa na CLI. Espera por um enter para continuar */
+    static void pausa() {
+        System.out.println("Digite enter para continuar...");
+        teclado.nextLine();
     }
 
+    /** Cabeçalho principal da CLI do sistema */
+    static void cabecalho() {
+        System.out.println("AEDs II COMÉRCIO DE COISINHAS");
+        System.out.println("=============================");
+    }
+    
+    static <T extends Number> T lerOpcao(String mensagem, Class<T> classe) {
+        
+    	T valor;
+        
+    	System.out.println(mensagem);
+    	try {
+            valor = classe.getConstructor(String.class).newInstance(teclado.nextLine());
+        } catch (InstantiationException | IllegalAccessException | IllegalArgumentException 
+        		| InvocationTargetException | NoSuchMethodException | SecurityException e) {
+            return null;
+        }
+        return valor;
+    }
+    
+    /**
+     * Lê os dados de um arquivo-texto e retorna um vetor de produtos. Arquivo-texto no formato
+     * N  (quantidade de produtos) <br/>
+     * tipo;descrição;preçoDeCusto;margemDeLucro;[dataDeValidade] <br/>
+     * Deve haver uma linha para cada um dos produtos. Retorna um vetor vazio em caso de problemas com o arquivo.
+     * @param nomeArquivoDados Nome do arquivo de dados a ser aberto.
+     * @return Um vetor com os produtos carregados, ou vazio em caso de problemas de leitura.
+     */
+    static Produto[] lerProdutos(String nomeArquivoDados) {
+    	
+    	Scanner arquivo = null;
+    	int numProdutos;
+    	String linha;
+    	Produto produto;
+    	Produto[] produtosCadastrados;
+    	
+    	try {
+    		arquivo = new Scanner(new File(nomeArquivoDados), Charset.forName("UTF-8"));
+    		
+    		numProdutos = Integer.parseInt(arquivo.nextLine());
+    		produtosCadastrados = new Produto[numProdutos];
+    		
+    		for (int i = 0; i < numProdutos; i++) {
+    			linha = arquivo.nextLine();
+    			produto = Produto.criarDoTexto(linha);
+    			produtosCadastrados[i] = produto;
+    		}
+    		quantosProdutos = numProdutos;
+    		
+    	} catch (IOException excecaoArquivo) {
+    		produtosCadastrados = null;
+    	} finally {
+    		if (arquivo != null) {
+    			arquivo.close();
+    		}
+    	}
+    	
+    	return produtosCadastrados;
+    }
+    
+    /**
+     * Lê os dados de um arquivo-texto e retorna um vetor de pedidos. Arquivo-texto no formato
+     * N  (quantidade de pedidos) <br/>
+     * dataDoPedido;formaDePagamento;descrições dos produtos do pedido <br/>
+     * Deve haver uma linha para cada um dos pedidos. Retorna um vetor vazio em caso de problemas com o arquivo.
+     * @param nomeArquivoDados Nome do arquivo de dados a ser aberto.
+     * @return Um vetor com os pedidos carregados, ou vazio em caso de problemas de leitura.
+     */
+    static Pedido[] lerPedidos(String nomeArquivoDados) {
+    	
+    	Pedido[] pedidosCadastrados;
+    	Scanner arquivo = null;
+    	int numPedidos;
+    	String linha;
+    	Pedido pedido;
+    	
+    	try {
+    		arquivo = new Scanner(new File(nomeArquivoDados), Charset.forName("UTF-8"));
+    		
+    		numPedidos = Integer.parseInt(arquivo.nextLine());
+    		pedidosCadastrados = new Pedido[numPedidos];
+    		
+    		for (int i = 0; i < numPedidos; i++) {
+    			linha = arquivo.nextLine();
+    			pedido = criarPedido(linha);
+    			pedidosCadastrados[i] = pedido;
+    		}
+    		quantPedidos = numPedidos;
+    		
+    	} catch (IOException excecaoArquivo) {
+    		pedidosCadastrados = null;
+    	} finally {
+    		if (arquivo != null) {
+    			arquivo.close();
+    		}
+    	}
+    	
+    	return pedidosCadastrados;
+    }
+    
+    private static Pedido criarPedido(String dados) {
 
+    	String[] dadosPedido;
+    	DateTimeFormatter formatoData;
+    	LocalDate dataDoPedido;
+    	int formaDePagamento;
+    	Pedido pedido;
+    	Produto produto;
+
+    	dadosPedido = dados.split(";");
+
+    	formatoData = DateTimeFormatter.ofPattern("dd/MM/yyyy");
+    	dataDoPedido = LocalDate.parse(dadosPedido[0], formatoData);
+
+    	formaDePagamento = Integer.parseInt(dadosPedido[1]);
+
+    	pedido = new Pedido(dataDoPedido, formaDePagamento);
+
+    	for (int i = 2; i < dadosPedido.length; i++) {
+    		String campo = dadosPedido[i];
+    		String nomeProduto;
+    		int quantidade;
+
+    		int separador = campo.lastIndexOf(':');
+    		if (separador >= 0) {
+    			nomeProduto = campo.substring(0, separador);
+    			try {
+    				quantidade = Integer.parseInt(campo.substring(separador + 1));
+    			} catch (NumberFormatException e) {
+    				nomeProduto = campo;
+    				quantidade = 1;
+    			}
+    		} else {
+    			nomeProduto = campo;
+    			quantidade = 1;
+    		}
+
+    		produto = pesquisarProduto(nomeProduto);
+    		pedido.incluirProduto(produto, quantidade);
+    	}
+    	return pedido;
+    }
+    
+    /** Localiza um produto no vetor de produtos cadastrados, a partir do nome de produto passado como parâmetro para esse método. 
+     *  A busca não é sensível ao caso.
+     *  @param pesquisado Nome do produto a ser pesquisado no vetor de produtos cadastrados. 
+     *  @return O produto encontrado ou null, caso o produto não tenha sido localizado no vetor de produtos cadastrados.
+     */
+    static Produto pesquisarProduto(String pesquisado) {
+        
+    	Produto produto = null;
+    	Boolean localizado = false;
+    	
+    	for (int i = 0; (i < quantosProdutos && !localizado); i++) {
+        	if (produtosCadastrados[i].descricao.equals(pesquisado)) {
+        		produto = produtosCadastrados[i];
+        		localizado = true;
+        	}
+        }
+        
+        if (!localizado) {
+        	return null;
+        } else {
+        	return(produto);
+        }     
+    }
+    
+    /** Imprime o menu principal, lê a opção do usuário e a retorna (int).
+     * @return Um inteiro com a opção do usuário.
+    */
+    static int menu() {
+        cabecalho();
+        System.out.println("1 - Ordenar pedidos");
+        System.out.println("2 - Embaralhar pedidos");
+        System.out.println("3 - Listar todos os pedidos");
+        System.out.println("4 - Localizar pedidos premium (por valor de corte)");
+        System.out.println("0 - Finalizar");
+        
+        return lerOpcao("Digite sua opção: ", Integer.class);
+    }
+    
+    
+    static void localizarPedidosPremium() {
+
+        cabecalho();
+        Double valorCorte = lerOpcao("Informe o valor de corte (R$): ", Double.class);
+
+        if (valorCorte == null) {
+            System.out.println("Valor inválido!");
+            return;
+        }
+        if (quantPedidos == 0 || pedidosOrdenadosPorValor == null) {
+            System.out.println("Não há pedidos cadastrados.");
+            return;
+        }
+
+        int primeiro = indicePrimeiroComValorFinalMaiorOuIgual(valorCorte);
+        if (primeiro >= quantPedidos) {
+            System.out.println("Nenhum pedido com valor final >= R$ " + String.format("%.2f", valorCorte) + ".");
+            return;
+        }
+
+        System.out.println("\nPedidos com valor final >= R$ " + String.format("%.2f", valorCorte) + ":\n");
+        for (int i = primeiro; i < quantPedidos; i++) {
+            System.out.println(pedidosOrdenadosPorValor[i].toString());
+            System.out.println();
+        }
+    }
+
+    private static int indicePrimeiroComValorFinalMaiorOuIgual(double limite) {
+        int lo = 0;
+        int hi = quantPedidos - 1;
+        int resultado = quantPedidos;
+        while (lo <= hi) {
+            int meio = (lo + hi) >>> 1;
+            double v = pedidosOrdenadosPorValor[meio].valorFinal();
+            if (Double.compare(v, limite) >= 0) {
+                resultado = meio;
+                hi = meio - 1;
+            } else {
+                lo = meio + 1;
+            }
+        }
+        return resultado;
+    }
+
+    static int exibirMenuOrdenadores() {
+        cabecalho();
+        System.out.println("1 - Bolha");
+        System.out.println("2 - Inserção"); 
+        System.out.println("3 - Seleção"); 
+        System.out.println("4 - Mergesort"); 
+        System.out.println("5 - Heapsort"); 
+        System.out.println("0 - Finalizar");
+       
+        return lerOpcao("Digite sua opção: ", Integer.class);
+    }
+    
+    static int exibirMenuComparadores() {
+        cabecalho();
+        System.out.println("1 - Critério A: Valor Final do Pedido");
+        System.out.println("2 - Critério B: Volume Total de Itens");
+        System.out.println("3 - Critério C: Índice de Economia (Decrescente)");
+
+        return lerOpcao("Digite sua opção: ", Integer.class);
+    }
+    
+    /** Ordena o vetor de pedidos cadastrados empregando um método de ordenação selecionado pelo
+     *  usuário, dentre os seguintes: bolha, seleção, inserção, mergesort e heapsort.
+     *  O usuário também escolhe um critério de ordenação: A (Valor Final), B (Volume de Itens)
+     *  ou C (Índice de Economia, decrescente).
+     *  O método interage com o usuário por meio de menus e aplica
+     *  a ordenação escolhida. Ao final, exibe o tempo total gasto no processo de ordenação, em ms.
+    */
+    static void ordenarPedidos(){
+
+        Integer opcaoAlgoritmo = exibirMenuOrdenadores();
+        if (opcaoAlgoritmo == null) {
+            System.out.println("Opção inválida!");
+            return;
+        }
+        switch (opcaoAlgoritmo) {
+            case 0 -> {
+                return;
+            }
+            case 1 -> ordenador = new BubbleSort<>();
+            case 2 -> ordenador = new InsertionSort<>();
+            case 3 -> ordenador = new SelectionSort<>();
+            case 4 -> ordenador = new Mergesort<>();
+            case 5 -> ordenador = new Heapsort<>();
+            default -> {
+                System.out.println("Opção de algoritmo inválida!");
+                return;
+            }
+        }
+
+        Integer opcaoCriterio = exibirMenuComparadores();
+        if (opcaoCriterio == null) {
+            System.out.println("Opção inválida!");
+            ordenador = null;
+            return;
+        }
+        switch (opcaoCriterio) {
+            case 1 -> ordenador.setComparador(new ComparadorCriterioA());
+            case 2 -> ordenador.setComparador(new ComparadorCriterioB());
+            case 3 -> ordenador.setComparador(new ComparadorCriterioC());
+            default -> {
+                System.out.println("Critério de ordenação inválido!");
+                ordenador = null;
+                return;
+            }
+        }
+
+        pedidosCadastrados = ordenador.ordenar(pedidosCadastrados);
+        System.out.println("Tempo gasto com a ordenação dos pedidos: " + ordenador.getTempoOrdenacao() + " ms.");
+        ordenador = null;
+    }
+
+    static void embaralharPedidos(){
+        Collections.shuffle(Arrays.asList(pedidosCadastrados));
+    }
+
+    /** Lista todos os pedidos cadastrados, numerados, um por linha */
+    static void listarTodosOsPedidos() {
+    	
+        cabecalho();
+        System.out.println("\nPedidos cadastrados: ");
+        for (int i = 0; i < quantPedidos; i++) {
+        	System.out.println(String.format("%02d - %s\n", (i + 1), pedidosCadastrados[i].toString()));
+        }
+    }
+    
     public static void main(String[] args) {
-        int tam = 20;
-        Integer[] vetor = gerarVetorObjetos(tam);
+		
+    	teclado = new Scanner(System.in, Charset.forName("UTF-8"));
+        
+    	nomeArquivoDados = "C:\\Users\\1318424\\Desktop\\unidade-1-complexidade-e-ordena-o-arthurhasantos-main\\unidade-1-complexidade-e-ordena-o-arthurhasantos-main\\src\\produtos.txt";
+        // so trocar o caminho, botei esse ai p testar pq por algum motivo produtos.txt nn tava indo
+        produtosCadastrados = lerProdutos(nomeArquivoDados);
+       
+        String nomeArquivoPedidos = "C:\\Users\\1318424\\Desktop\\unidade-1-complexidade-e-ordena-o-arthurhasantos-main\\unidade-1-complexidade-e-ordena-o-arthurhasantos-main\\src\\pedidos.txt";
+        // so trocar o caminho, botei esse ai p testar pq por algum motivo pedidos.txt nn tava indo
+        pedidosCadastrados = lerPedidos(nomeArquivoPedidos);
+        
+        ComparadorPorData comparadorPorData = new ComparadorPorData();
+        ordenador = new Heapsort<>();
+        ordenador.setComparador(comparadorPorData);
+        pedidosOrdenadosPorData = ordenador.ordenar(pedidosCadastrados);
 
-        BubbleSort<Integer> bolha = new BubbleSort<>();
+        pedidosOrdenadosPorValor = Arrays.copyOf(pedidosCadastrados, quantPedidos);
+        IOrdenator<Pedido> ordenadorValor = new Heapsort<>();
+        ordenadorValor.setComparador(new ComparadorCriterioA());
+        pedidosOrdenadosPorValor = ordenadorValor.ordenar(pedidosOrdenadosPorValor);
 
-        Integer[] vetorOrdenadoBolha = bolha.ordenar(vetor);
+        int opcao = -1;
+      
+        do{
+        	opcao = menu();
+            switch (opcao) {
+                case 1 -> ordenarPedidos();
+                case 2 -> embaralharPedidos();
+                case 3 -> listarTodosOsPedidos();
+                case 4 -> localizarPedidosPremium();
+                case 0 -> System.out.println("flw!.");
+            }
+            pausa();
+        } while (opcao != 0);       
 
-        System.out.println("\nVetor ordenado método Bolha:");
-        System.out.println("Comparações: " + bolha.getComparacoes());
-        System.out.println("Movimentações: " + bolha.getMovimentacoes());
-        System.out.println("Tempo de ordenação (ms): " + bolha.getTempoOrdenacao());
-
-        /* TO DO
-        *Fazer a implementacao do restante do main para a ordenacao 
-        *  com os algoritmos InsertionSort e SelectionSort
-        */
+        teclado.close();    
     }
 }
